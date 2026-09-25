@@ -2,6 +2,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authApi,
+  failureMessages,
+  MAX_ATTEMPTS,
   statusLabel,
   videoApi,
   type JobStatus,
@@ -42,7 +44,7 @@ export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
 });
 
-const ACCEPT = ".mp4,.avi,.mov,.mkv,.wmv,.flv,.webm";
+const ACCEPT = ".mp4,.mov,.mkv,.webm";
 
 const statusStyles: Record<JobStatus, string> = {
   PENDING: "border-border text-muted-foreground",
@@ -68,6 +70,7 @@ function DashboardPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -111,6 +114,19 @@ function DashboardPage() {
     window.open(url, "_blank");
   }
 
+  async function handleRetry(job: VideoJob) {
+    setError("");
+    setRetryingId(job.id);
+    try {
+      await videoApi.retryVideo(job.id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error retrying video.");
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
   if (!user) return null;
 
   return (
@@ -150,7 +166,7 @@ function DashboardPage() {
           <p className="fiap-eyebrow text-primary">Step 01</p>
           <h2 className="fiap-heading mt-2 text-xl text-foreground">Upload videos</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Supported formats: MP4, AVI, MOV, MKV, WMV, FLV, WEBM.
+            Supported formats: MP4, MOV, MKV, WEBM.
           </p>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <Input
@@ -229,9 +245,26 @@ function DashboardPage() {
                         </button>
                       )}
                       {job.status === "FAILED" && (
-                        <span className="text-sm text-destructive">
-                          {job.errorMessage ?? "Processing error."}
-                        </span>
+                        <div className="space-y-1.5">
+                          <p className="text-sm text-destructive">
+                            {job.failureReason
+                              ? failureMessages[job.failureReason]
+                              : "Processing error."}
+                          </p>
+                          {job.attempts < MAX_ATTEMPTS ? (
+                            <button
+                              className="fiap-eyebrow text-primary hover:underline disabled:opacity-50"
+                              disabled={retryingId === job.id}
+                              onClick={() => handleRetry(job)}
+                            >
+                              {retryingId === job.id ? "Retrying..." : "Retry →"}
+                            </button>
+                          ) : (
+                            <span className="fiap-eyebrow text-muted-foreground">
+                              Retries exhausted
+                            </span>
+                          )}
+                        </div>
                       )}
                       {(job.status === "PENDING" || job.status === "PROCESSING") && (
                         <span className="text-sm text-muted-foreground">—</span>

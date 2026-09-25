@@ -1,13 +1,31 @@
-// API client (mocked). Replace with real HTTP calls later.
+// Real API client against the fiapx-video-processor backend (/api/v1).
+// Two services, two base URLs, no gateway yet (see fiapx-video-processor's
+// docs/adr/0007): identity-api issues/owns auth, video-api owns everything
+// else. They're split on purpose (own database each) — not a detail to
+// paper over by pointing both at the same host.
 
 export type JobStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
+
+// Mirrors the backend's FailureReason enum (video-processor's
+// internal/videoprocessing/domain/processing_request.go) so the UI never
+// has to parse or guess at free-text error strings.
+export type FailureReason =
+  "INVALID_FORMAT" | "SIZE_EXCEEDED" | "CORRUPTED_FILE" | "INTERNAL_ERROR";
+
+export const failureMessages: Record<FailureReason, string> = {
+  INVALID_FORMAT: "Unsupported video format. Accepted formats: mp4, mov, mkv, webm.",
+  SIZE_EXCEEDED: "Video exceeds the maximum allowed size (500 MB) or duration (30 minutes).",
+  CORRUPTED_FILE: "Could not read the video file. It may be corrupted.",
+  INTERNAL_ERROR: "An internal error occurred while processing your video.",
+};
 
 export interface VideoJob {
   id: string;
   fileName: string;
   status: JobStatus;
   downloadUrl?: string | undefined;
-  errorMessage?: string | undefined;
+  failureReason?: FailureReason | undefined;
+  attempts: number;
   createdAt: string;
 }
 
@@ -20,52 +38,102 @@ export interface AuthUser {
 const TOKEN_KEY = "fiapx.token";
 const USER_KEY = "fiapx.user";
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const API_URL = import.meta.env["VITE_API_URL"] ?? "http://localhost:8080/api/v1";
+const IDENTITY_API_URL = import.meta.env["VITE_IDENTITY_API_URL"] ?? "http://localhost:8081/api/v1";
 
-let jobs: VideoJob[] = [
-  {
-    id: "seed-1",
-    fileName: "intro-lesson.mp4",
-    status: "COMPLETED",
-    downloadUrl: "#",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "seed-2",
-    fileName: "final-interview.mov",
-    status: "PROCESSING",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "seed-3",
-    fileName: "corrupted.avi",
-    status: "FAILED",
-    errorMessage: "Invalid video format or corrupted file.",
-    createdAt: new Date().toISOString(),
-  },
-];
+export const MAX_ATTEMPTS = 3;
+
+interface ApiErrorBody {
+  error?: { code: string; message: string };
+}
+
+class ApiError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+async function request(
+  path: string,
+  init: RequestInit = {},
+  baseUrl: string = API_URL,
+): Promise<Response> {
+  const token = getToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
+
+  if (res.status === 401) {
+    authApi.logout();
+    if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      window.location.href = "/";
+    }
+  }
+
+  if (!res.ok) {
+    let body: ApiErrorBody = {};
+    try {
+      body = await res.json();
+    } catch {
+      // response had no JSON body
+    }
+    throw new ApiError(
+      body.error?.code ?? "UNKNOWN_ERROR",
+      body.error?.message ?? `Request failed with status ${res.status}`,
+    );
+  }
+
+  return res;
+}
+
+async function requestJSON<T>(
+  path: string,
+  init: RequestInit = {},
+  baseUrl: string = API_URL,
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "application/json");
+  const res = await request(path, { ...init, headers }, baseUrl);
+  return res.json() as Promise<T>;
+}
+
+interface AuthResponse {
+  user: AuthUser;
+  token: string;
+}
+
+function storeSession(auth: AuthResponse) {
+  localStorage.setItem(TOKEN_KEY, auth.token);
+  localStorage.setItem(USER_KEY, JSON.stringify(auth.user));
+}
 
 export const authApi = {
   async login(email: string, password: string): Promise<AuthUser> {
-    await delay(500);
-    if (!email.includes("@") || password.length < 4) {
-      throw new Error("Invalid email or password.");
-    }
-    const user: AuthUser = { id: "u1", name: email.split("@")[0] ?? email, email };
-    localStorage.setItem(TOKEN_KEY, "mock-token-" + Date.now());
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-    return user;
+    const auth = await requestJSON<AuthResponse>(
+      "/auth/login",
+      { method: "POST", body: JSON.stringify({ email, password }) },
+      IDENTITY_API_URL,
+    );
+    storeSession(auth);
+    return auth.user;
   },
 
   async register(name: string, email: string, password: string): Promise<AuthUser> {
-    await delay(500);
-    if (!name.trim()) throw new Error("Please enter your name.");
-    if (!email.includes("@")) throw new Error("Invalid email.");
-    if (password.length < 4) throw new Error("Password must be at least 4 characters.");
-    const user: AuthUser = { id: "u1", name, email };
-    localStorage.setItem(TOKEN_KEY, "mock-token-" + Date.now());
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-    return user;
+    const auth = await requestJSON<AuthResponse>(
+      "/auth/register",
+      { method: "POST", body: JSON.stringify({ name, email, password }) },
+      IDENTITY_API_URL,
+    );
+    storeSession(auth);
+    return auth.user;
   },
 
   logout() {
@@ -81,55 +149,74 @@ export const authApi = {
   },
 };
 
+interface RequestSummary {
+  id: string;
+  fileName: string;
+  status: JobStatus;
+  failureReason?: FailureReason | "";
+  attempts: number;
+  frameCount?: number;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+function toJob(summary: RequestSummary): VideoJob {
+  return {
+    id: summary.id,
+    fileName: summary.fileName,
+    status: summary.status,
+    failureReason: summary.failureReason || undefined,
+    attempts: summary.attempts,
+    createdAt: summary.createdAt,
+  };
+}
+
+interface UploadResultItem {
+  fileName: string;
+  accepted: boolean;
+  request?: RequestSummary;
+  error?: { code: string; message: string };
+}
+
 export const videoApi = {
   async uploadVideos(files: File[]): Promise<VideoJob[]> {
-    await delay(600);
-    const created: VideoJob[] = files.map((f, i) => ({
-      id: `${Date.now()}-${i}`,
-      fileName: f.name,
-      status: "PENDING",
-      createdAt: new Date().toISOString(),
-    }));
-    jobs = [...created, ...jobs];
-    created.forEach((job, i) => {
-      setTimeout(() => advance(job.id, "PROCESSING"), 2500 + i * 500);
-      setTimeout(() => {
-        const fail = Math.random() < 0.2;
-        advance(
-          job.id,
-          fail ? "FAILED" : "COMPLETED",
-          fail ? "Failed to process the video. Please try again." : undefined,
-        );
-      }, 8000 + i * 800);
-    });
-    return created;
+    const form = new FormData();
+    files.forEach((f) => form.append("videos", f));
+
+    const res = await request("/videos", { method: "POST", body: form });
+    const { results } = (await res.json()) as { results: UploadResultItem[] };
+
+    const accepted = results.filter((r) => r.accepted && r.request);
+    const rejected = results.filter((r) => !r.accepted);
+
+    if (rejected.length > 0) {
+      const detail = rejected.map((r) => `${r.fileName}: ${r.error?.message}`).join(" ");
+      throw new Error(detail);
+    }
+
+    return accepted.map((r) => toJob(r.request!));
   },
 
   async listJobs(): Promise<VideoJob[]> {
-    await delay(300);
-    return jobs.map((j) => ({ ...j }));
+    const { requests } = await requestJSON<{ requests: RequestSummary[] }>("/videos");
+    return requests.map(toJob);
   },
 
   async getDownloadUrl(id: string): Promise<string> {
-    await delay(200);
-    const job = jobs.find((j) => j.id === id);
-    if (!job || job.status !== "COMPLETED") throw new Error("File unavailable.");
-    return job.downloadUrl ?? "#";
+    const { downloadUrl } = await requestJSON<{ downloadUrl: string; expiresIn: number }>(
+      `/videos/${id}/download`,
+    );
+    return downloadUrl;
+  },
+
+  async retryVideo(id: string): Promise<VideoJob> {
+    const { request: summary } = await requestJSON<{ request: RequestSummary }>(
+      `/videos/${id}/retry`,
+      { method: "POST" },
+    );
+    return toJob(summary);
   },
 };
-
-function advance(id: string, status: JobStatus, errorMessage?: string) {
-  jobs = jobs.map((j) =>
-    j.id === id
-      ? {
-          ...j,
-          status,
-          errorMessage,
-          downloadUrl: status === "COMPLETED" ? "#" : undefined,
-        }
-      : j,
-  );
-}
 
 export const statusLabel: Record<JobStatus, string> = {
   PENDING: "Pending",
