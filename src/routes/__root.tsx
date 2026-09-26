@@ -73,10 +73,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "FIAP X - Video Processor" },
+      { title: "FIAP X | Video Processor" },
       { name: "description", content: "Upload, process and download your videos with FIAP X." },
       { name: "author", content: "FIAP X" },
-      { property: "og:title", content: "FIAP X - Video Processor" },
+      { property: "og:title", content: "FIAP X | Video Processor" },
       { property: "og:description", content: "Upload, process and download your videos with FIAP X." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

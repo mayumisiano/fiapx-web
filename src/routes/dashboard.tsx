@@ -26,7 +26,7 @@ export const Route = createFileRoute("/dashboard")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Dashboard | FIAP X - Video Processor" },
+      { title: "Dashboard | FIAP X | Video Processor" },
       {
         name: "description",
         content:

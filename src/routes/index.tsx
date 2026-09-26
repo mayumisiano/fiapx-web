@@ -10,13 +10,13 @@ export const Route = createFileRoute("/")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Sign in | FIAP X - Video Processor" },
+      { title: "Sign in | FIAP X | Video Processor" },
       {
         name: "description",
         content:
           "Sign in to FIAP X to upload videos, track processing status and download results as ZIP.",
       },
-      { property: "og:title", content: "Sign in | FIAP X - Video Processor" },
+      { property: "og:title", content: "Sign in | FIAP X | Video Processor" },
       {
         property: "og:description",
         content: "Sign in to FIAP X to upload and process your videos.",
@@ -59,15 +59,17 @@ function AuthPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-background">
-      <header className="hairline border-b border-border px-6 py-5">
+    <main className="relative flex min-h-screen flex-col overflow-hidden bg-background">
+      <div aria-hidden="true" className="fiap-filmstrip-bg pointer-events-none absolute inset-0" />
+
+      <header className="hairline relative z-10 flex items-baseline gap-3 border-b border-border px-6 py-5">
         <FiapLogo />
+        <span className="fiap-eyebrow text-muted-foreground">| Video Processor</span>
       </header>
 
-      <div className="flex flex-1 items-center justify-center px-4 py-12">
+      <div className="relative z-10 flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-md hairline border border-primary/50 bg-background p-8">
-          <p className="fiap-eyebrow text-primary">Video Processor</p>
-          <h1 className="fiap-heading mt-3 text-2xl text-foreground">
+          <h1 className="fiap-heading text-2xl text-foreground">
             {mode === "login" ? "Sign in" : "Create account"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -142,7 +144,7 @@ function AuthPage() {
         </div>
       </div>
 
-      <footer className="hairline border-t border-border px-6 py-4">
+      <footer className="hairline relative z-10 border-t border-border px-6 py-4">
         <p className="fiap-eyebrow text-muted-foreground">
           FIAP X <span className="text-primary">■</span> Video Processing Platform
         </p>

@@ -163,6 +163,36 @@
   border-width: 0.5px;
 }
 
+.fiap-filmstrip-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("/filmstrip-frames.png");
+  background-repeat: repeat;
+  background-size: auto 40px;
+  background-position: 0 0;
+  opacity: 0.22;
+  filter: saturate(0.85);
+  -webkit-mask-image: repeating-linear-gradient(-45deg, #000 0 34px, transparent 34px 130px);
+  mask-image: repeating-linear-gradient(-45deg, #000 0 34px, transparent 34px 130px);
+  animation: fiap-filmstrip-scroll 22s linear infinite;
+}
+
+@keyframes fiap-filmstrip-scroll {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -711.11px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fiap-filmstrip-bg::before {
+    animation: none;
+  }
+}
+
 @layer base {
   body {
     font-family: var(--font-sans);
